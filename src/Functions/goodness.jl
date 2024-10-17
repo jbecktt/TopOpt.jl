@@ -111,7 +111,7 @@ end
 
 # Function that produces a volume-weighted element-wise sensitivity metric
 # sens_IVW = sensitivity_PVW(x,K,V0,stressTerms,kinTerms,ξ)
-    # x is the 
+    # x are the pseudodensities
     # K₁, K₂, and K₃ are all vectors of size [nels] (acquired from FtoK123 or orth_decomp)
     # Where matl_props is a vector, e.g. for Mooney-Rivlin matl_props could be [0.04 0.001 0.5]
     # Vol is a vector of size [nels] that contains information of the volume for each element

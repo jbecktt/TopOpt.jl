@@ -39,7 +39,7 @@ function FEASolver(::Type{CG}, ::Type{Assembly}, problem; kwargs...)
     return PCGDisplacementSolver(problem; kwargs...)
 end
 
-function FEASolver(::Type{Hyperelastic}, mp, problem; kwargs...) # JGB: add place to add NeoHookean <: :HyperelasticParam
+function FEASolver(::Type{Hyperelastic}, mp::ConstitutiveLaw, problem; kwargs...) # JGB: add place to add NeoHookean <: :HyperelasticParam
     return HyperelasticDisplacementSolver(mp, problem; kwargs...)
 end
 

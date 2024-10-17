@@ -14,6 +14,7 @@ const QuadraticHexahedron = Ferrite.Cell{3,20,6}
 
 abstract type AbstractTopOptProblem end
 
+include("constitutive_models.jl")
 include("grids.jl")
 include("metadata.jl")
 include("problem_types.jl")
@@ -54,6 +55,9 @@ export RayProblem,
     MultiLoad,
     TensionBar,
     TensionRoller,
-    assemble_hyperelastic!
+    assemble_hyperelastic!,
+    ConstitutiveLaw,
+    NeoHooke,
+    MooneyRivlin
 
 end # module

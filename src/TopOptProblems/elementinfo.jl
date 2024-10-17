@@ -103,7 +103,7 @@ function ElementFEAInfo(
 end
 
 function ElementFEAInfo_hyperelastic(
-    mp, sp, u, quad_order=2, ::Type{Val{mat_type}}=Val{:Static}, nearlyincompressible=false; ts = 1.0,
+    mp::ConstitutiveLaw, sp, u, quad_order=2, ::Type{Val{mat_type}}=Val{:Static}, nearlyincompressible=false; ts = 1.0,
 ) where {mat_type}
     Kes, weights, dloads, ges, Fes, cellvalues, facevalues = make_Kes_and_fes_hyperelastic(
         mp, sp, u, quad_order, Val{mat_type}, ts

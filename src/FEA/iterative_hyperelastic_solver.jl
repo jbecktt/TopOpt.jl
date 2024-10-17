@@ -12,7 +12,7 @@ mutable struct HyperelasticDisplacementSolver{
     Tu<:AbstractVector{T},
     TF<:AbstractVector{<:AbstractMatrix{T}},
 } <: AbstractHyperelasticSolver
-    mp
+    mp::ConstitutiveLaw
     problem::TP2
     globalinfo::TG
     elementinfo::TE
@@ -35,7 +35,7 @@ mutable struct HyperelasticNearlyIncompressibleDisplacementSolver{
     Tu<:AbstractVector{T},
     TF<:AbstractVector{<:AbstractMatrix{T}},
 } <: AbstractHyperelasticSolver
-    mp
+    mp::ConstitutiveLaw
     problem::TP2
     globalinfo::TG
     elementinfo::TE
@@ -55,7 +55,7 @@ function Base.show(::IO, ::MIME{Symbol("text/plain")}, x::HyperelasticNearlyInco
     return println("TopOpt nearly-incompressible hyperelastic solver")
 end
 function HyperelasticDisplacementSolver(
-    mp, # JGB: add type later
+    mp::ConstitutiveLaw, # JGB: add type later
     sp::StiffnessTopOptProblem{dim,T}; # JGB: eventually add ::HyperelaticParam type
     xmin=T(1)/1000,
     penalty=PowerPenalty{T}(1),

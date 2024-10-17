@@ -136,7 +136,7 @@ function make_Kes_and_fes(problem, quad_order, ::Type{Val{mat_type}}) where {mat
     return Kes, weights, dloads, cellvalues, facevalues
 end
 
-function make_Kes_and_fes_hyperelastic(mp, problem, u, quad_order, ::Type{Val{mat_type}}, ts) where {mat_type}
+function make_Kes_and_fes_hyperelastic(mp::ConstitutiveLaw, problem, u, quad_order, ::Type{Val{mat_type}}, ts) where {mat_type}
     T = floattype(problem)
     dim = getdim(problem)
     geom_order = getgeomorder(problem)
@@ -295,7 +295,7 @@ function _make_Kes_and_weights(
     return Kes, weights
 end
 
-function Ψ(C, mp) # JGB: add to .ipynb
+function Ψ(C, mp::NeoHooke)
     μ = mp.μ
     λ = mp.λ
     I1 = tr(C)
@@ -308,7 +308,18 @@ function Ψ(C, mp) # JGB: add to .ipynb
     #return μ / 2 * (I1bar - 3) + 0.5*(λ + 2μ/3)*(J-1)^2 # ABAQUS/Bower version
 end
 
-function constitutive_driver(C, mp) # JGB removed type ::NeoHook from mp
+function Ψ(C, mp::MooneyRivlin)
+    C₁₀ = mp.C₁₀
+    C₀₁ = mp.C₀₁
+    κ = mp.κ
+    I1 = tr(C)
+    J = sqrt(det(C))
+    I1bar = I1*J^(-2/3)
+    I2bar = 0.5*(I1bar^2-tr(C*C)*J^(-4/3))
+    return C₁₀ * (I1bar - 3) + C₀₁ * (I2bar - 3) + κ/2 * (J - 1)^2
+end
+
+function constitutive_driver(C, mp::ConstitutiveLaw) # JGB removed type ::NeoHook from mp
     # Compute all derivatives in one function call
     ∂²Ψ∂C², ∂Ψ∂C = Tensors.hessian(y -> Ψ(y, mp), C, :all)
     S = 2.0 * ∂Ψ∂C
@@ -323,7 +334,7 @@ function _make_Kes_and_weights_hyperelastic(
     ::Type{Tuple{MatrixType,VectorType,MatrixTypeF}},
     ::Type{Val{n_basefuncs}},
     ::Type{Val{Kesize}},
-    mp,
+    mp::ConstitutiveLaw,
     u,
     ρ,
     quadrature_rule,

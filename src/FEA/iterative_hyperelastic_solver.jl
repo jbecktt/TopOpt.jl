@@ -1,6 +1,8 @@
+using ProgressMeter
+
 abstract type AbstractHyperelasticSolver <: AbstractFEASolver end
 
-mutable struct HyperelasticCompressibleDisplacementSolver{
+mutable struct HyperelasticDisplacementSolver{
     T,
     dim,
     TP1<:AbstractPenalty{T},
@@ -20,8 +22,8 @@ mutable struct HyperelasticCompressibleDisplacementSolver{
     penalty::TP1
     prev_penalty::TP1
     xmin::T
-    tsteps::Int
-    ntsteps::Int
+    ts0::T
+    progressbar::Bool
 end
 mutable struct HyperelasticNearlyIncompressibleDisplacementSolver{
     T,
@@ -43,10 +45,10 @@ mutable struct HyperelasticNearlyIncompressibleDisplacementSolver{
     penalty::TP1
     prev_penalty::TP1
     xmin::T
-    tsteps::Int
-    ntsteps::Int
+    ts0::T
+    progressbar::Bool
 end
-function Base.show(::IO, ::MIME{Symbol("text/plain")}, x::HyperelasticCompressibleDisplacementSolver)
+function Base.show(::IO, ::MIME{Symbol("text/plain")}, x::HyperelasticDisplacementSolver)
     return println("TopOpt compressible hyperelastic solver")
 end
 function Base.show(::IO, ::MIME{Symbol("text/plain")}, x::HyperelasticNearlyIncompressibleDisplacementSolver)
@@ -59,30 +61,25 @@ function HyperelasticDisplacementSolver(
     penalty=PowerPenalty{T}(1),
     prev_penalty=deepcopy(penalty),
     quad_order=default_quad_order(sp),
-    tstep = 1,
     ntsteps = 20,
-    nearlyincompressible=false
+    nearlyincompressible=false,
+    progressbar = false
 ) where {dim,T}
+    @assert isinteger(ntsteps) && ntsteps ≥ 1 
     u = zeros(T, ndofs(sp.ch.dh))
-    ts0 = tstep/ntsteps
-    update!(sp.ch,ts0) # set initial time-step (adjusts dirichlet bcs)
+    ts0 = 1/ntsteps
+    Ferrite.update!(sp.ch,ts0) # set initial time-step (adjusts dirichlet bcs)
     apply!(u,sp.ch) # apply dbc for initial guess
     elementinfo = ElementFEAInfo_hyperelastic(mp, sp, u, quad_order, Val{:Static}, nearlyincompressible; ts = ts0) # JGB: add u
     F = [zeros(typeof(elementinfo.Fes[1])) for _ in 1:getncells(sp.ch.dh.grid)]
     globalinfo = GlobalFEAInfo_hyperelastic(sp) # JGB: small issue this leads to symmetric K initialization
-    #u = zeros(T, ndofs(sp.ch.dh)) # JGB
     vars = fill(one(T), getncells(sp.ch.dh.grid) - sum(sp.black) - sum(sp.white))
-    varind = sp.varind
+    varind = sp.varind # This is here in the direct_displacement_solver but idk why it is here
     return nearlyincompressible ?
-        HyperelasticNearlyIncompressibleDisplacementSolver(mp, sp, globalinfo, elementinfo, u, F, vars, penalty, prev_penalty, xmin, tstep, ntsteps) :
-        HyperelasticCompressibleDisplacementSolver(mp, sp, globalinfo, elementinfo, u, F, vars, penalty, prev_penalty, xmin, tstep, ntsteps)
-    #if nearlyincompressible
-    #    return HyperelasticNearlyIncompressibleDisplacementSolver(mp, sp, globalinfo, elementinfo, u, F, vars, penalty, prev_penalty, xmin, tstep, ntsteps) 
-    #else 
-    #    return HyperelasticCompressibleDisplacementSolver(mp, sp, globalinfo, elementinfo, u, F, vars, penalty, prev_penalty, xmin, tstep, ntsteps)
-    #end
+        HyperelasticNearlyIncompressibleDisplacementSolver(mp, sp, globalinfo, elementinfo, u, F, vars, penalty, prev_penalty, xmin, ts0, progressbar) :
+        HyperelasticDisplacementSolver(mp, sp, globalinfo, elementinfo, u, F, vars, penalty, prev_penalty, xmin, ts0, progressbar)
 end
-function (s::HyperelasticCompressibleDisplacementSolver{T})(
+function (s::HyperelasticDisplacementSolver{T})(
     ::Type{Val{safe}}=Val{false},
     ::Type{newT}=T;
     assemble_f=true,
@@ -101,11 +98,14 @@ function (s::HyperelasticCompressibleDisplacementSolver{T})(
     CG_MAXITER = 1000
     TS_MAXITER_ABS = 200
     TS_MAXITER_REL = 10
+    INC_UP = 1.1
+    INC_DOWN = 0.5
+    DELAY_UP = 5
+    DELAY_DOWN = 5
 
-    function HyperelasticSolverCore(ts)
-        update!(ch,ts)
+    function HyperelasticSolverCore(ts;update_firstelementinfo=true)
+        Ferrite.update!(ch,ts)
         apply!(un,ch) 
-        #println(maximum(un))
         u  = zeros(_ndofs) 
         Δu = zeros(_ndofs)
         ΔΔu = zeros(_ndofs)
@@ -115,11 +115,10 @@ function (s::HyperelasticCompressibleDisplacementSolver{T})(
         while true; newton_itr += 1
             u .= un .+ Δu # current trial solution
             # Compute residual norm for current guess
-            elementinfo = ElementFEAInfo_hyperelastic(s.mp, s.problem, u, default_quad_order(s.problem), Val{:Static}; ts=ts)
+            elementinfo = update_firstelementinfo || newton_itr > 1 ? ElementFEAInfo_hyperelastic(s.mp, s.problem, u, default_quad_order(s.problem), Val{:Static}; ts=ts) : elementinfo 
             assemble_hyperelastic!(globalinfo,s.problem,elementinfo,s.vars,getpenalty(s),s.xmin,assemble_f=assemble_f)
             apply_zero!(globalinfo.K,globalinfo.g,ch)
             normg[newton_itr] = norm(globalinfo.g)
-            println("Tstep: $ts / 1]. Iteration: $newton_itr. normg is equal to " * string(normg[newton_itr]))
             # Check for convergence
             if normg[newton_itr] < NEWTON_TOL
                 break
@@ -136,51 +135,44 @@ function (s::HyperelasticCompressibleDisplacementSolver{T})(
         un = u
     end
 
-    inc_up = 1.1
-    inc_down = 0.5
-    delay_up = 5
-    delay_down = 5
-    inc_delay = 10 # integer 
-    ntsteps = s.ntsteps
     iter_ts = 0
-    ts = 0
-    Δts0 = 1/ntsteps
+    ts = 0.0
+    Δts0 = s.ts0
     Δts = Δts0
     conv = zeros(TS_MAXITER_ABS)
-    #for tstep ∈ 1:ntsteps
-    #    ts = tstep/ntsteps
-    #end
+    prog = ProgressMeter.Progress(100,"Solving Hyperelastic FEA:"; showspeed=true, enabled=s.progressbar)
     while ts < 1 
         iter_ts += 1
         ts += Δts
         if ts > 1 
             Δts = 1 - ts
             ts = 1
-        elseif iter_ts > TS_MAXITER_REL && sum(conv[iter_ts-(TS_MAXITER_REL):iter_ts-1]) == 0
+        elseif iter_ts > TS_MAXITER_REL && sum(conv[(iter_ts-TS_MAXITER_REL):(iter_ts-1)]) == 0
             error("Reached maximum number of successive failed ts iterations ($TS_MAXITER_REL), aborting")
-        elseif iter_ts > TS_MAXITER_ABS
-            error("Reached maximum number of allowed ts iterations ($TS_MAXITER_ABS), aborting")
+        elseif iter_ts > TS_MAXITER_ABS 
+            error("Reached maximum number of allowed time step iterations ($TS_MAXITER_ABS), aborting")
         end
         try
-            HyperelasticSolverCore(ts)
+            HyperelasticSolverCore(ts;update_firstelementinfo=(iter_ts != 1 || ts != s.ts0))
             conv[iter_ts] = 1
-            if sum(conv[1:iter_ts]) == iter_ts || (iter_ts - findlast(x -> x == 0, conv[1:iter_ts-1])) > delay_up + 1 # increase Δts if it's never failed or if it's been 'inc_delay' or more successful iterations since last divergence
-                Δts *= inc_up
+            if sum(conv[1:iter_ts]) == iter_ts || (iter_ts - findlast(x -> x == 0, conv[1:iter_ts-1])) ≥ DELAY_UP # increase Δts if it's never failed or if it's been 'inc_delay' or more successful iterations since last divergence
+                Δts *= INC_UP
             end
+            ProgressMeter.update!(prog, Int(floor(ts*100)); showvalues = [("ts_iter",iter_ts),("Δts/Δts0", Δts / Δts0)])
         catch
             conv[iter_ts] = 0
             ts -= Δts # revert to previous successful ts
-            println("REMINDER TO CHECK THIS!!")
-            if any(x -> x == 1, conv) && (iter_ts - findlast(x -> x == 1, conv[1:iter_ts-1])) < delay_down # decrease Δts a little if it's been 'down_delay' or less failures in a row
-                Δts *= 1/inc_up
+            if any(x -> x == 1, conv) && (iter_ts - findlast(x -> x == 1, conv[1:iter_ts-1])) ≤ DELAY_DOWN # decrease Δts a little if it's been 'DELAY_DOWN' or less failures in a row
+                Δts *= 1/INC_UP
             else
-                Δts *= inc_down # otherwise make a big decrease in Δts
+                Δts *= INC_DOWN # otherwise make a big decrease in Δts
             end
         end
-        println("ts = $ts. Δts/Δts0 = $(Δts/Δts0)")
+        #println("ts = $ts. Δts/Δts0 = $(Δts/Δts0)")
     end
     s.u .= un
     s.F .= elementinfo.Fes
+    ProgressMeter.finish!(prog)
     return nothing
 end
 
@@ -206,7 +198,7 @@ function (s::HyperelasticNearlyIncompressibleDisplacementSolver{T})(
     ntsteps = s.ntsteps
     for tstep ∈ 1:ntsteps
         ts = tstep/ntsteps
-        update!(ch,ts)
+        Ferrite.update!(ch,ts)
         apply!(un,ch) 
         println(maximum(un))
         u  = zeros(_ndofs) 

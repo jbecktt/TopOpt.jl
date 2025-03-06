@@ -16,6 +16,9 @@ using AbstractDifferentiation: AbstractDifferentiation
 using StatsBase, Statistics 
 using Symbolics  
 using Plots:heatmap  
+using ThreadsX
+using ImplicitDifferentiation
+using Krylov
 const AD = AbstractDifferentiation
 
 export Volume,
@@ -58,7 +61,10 @@ export Volume,
     Entropy_Calc,
     Entropy,
     SMu_gen, 
-    SAlpha_gen
+    SAlpha_gen,
+    ElementG,
+    AssembleF,
+    ElementF
 
 const to = TimerOutput()
 
@@ -92,4 +98,7 @@ include("neural.jl")
 
 include("interpolation.jl")
 
+include("assemble_g.jl")
+include("element_ges.jl")
+include("element_fes.jl")
 end

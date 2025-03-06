@@ -66,14 +66,22 @@ function ChainRulesCore.rrule(::typeof(apply_boundary_with_meandiag!), K1, ch, f
     diagK1 = diag(K1)
     jac_meandiag = sign.(diagK1) / length(diagK1)
     function pullback_fn(Δ)
-        if fisempty; ΔK2 = Δ; else; ΔK2, Δf2 = Δ; end
+        ΔK2, Δf2 = Δ; 
+        ΔK1=SparseMatrixCSC(zeros(size(K1)))
+        Δf1 = zeros(eltype(f1), length(f1))
+        if ΔK2!=ZeroTangent()
+            ΔK1 = project_to_K1(deepcopy(ΔK2))
+        end
+        if Δf2!=ZeroTangent()
+            Δf1 = Array(project_to_f1(Δf2))
+        end
         ΔK2_ch_diagsum = zero(eltype(K1))
         for i in 1:length(ch.values)
             d = ch.prescribed_dofs[i]
             ΔK2_ch_diagsum += ΔK2[d,d]
         end
-        ΔK1 = project_to_K1(deepcopy(ΔK2))
         apply_boundary_with_zerodiag!(ΔK1, ch)
+        ΔK1=Matrix(ΔK1)
         for i in 1:size(K1, 1)
             ΔK1[i, i] += ΔK2_ch_diagsum * jac_meandiag[i]
             if applyzero == false && !fisempty
@@ -83,13 +91,12 @@ function ChainRulesCore.rrule(::typeof(apply_boundary_with_meandiag!), K1, ch, f
                         ΔK1[i,d] +=  Δf2[i] * -ch.values[j]
                     end
                 end
-                K1[i, i] += sum(Δf2[ch.prescribed_dofs] .* ch.values .* jac_meandiag[i])
+                ΔK1[i, i] += sum(Δf2[ch.prescribed_dofs] .* ch.values .* jac_meandiag[i])
             end
         end
         if fisempty
             return NoTangent(), ΔK1, NoTangent(), NoTangent(), NoTangent()
         else
-            Δf1 = project_to_f1(Δf2)
             Δf1[ch.prescribed_dofs] .= 0 # Add correction for inhomogenous DBCs
             return NoTangent(), ΔK1, NoTangent(), Δf1, NoTangent()
         end

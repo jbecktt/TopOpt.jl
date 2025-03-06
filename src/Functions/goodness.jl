@@ -56,6 +56,11 @@ stressTerms = fns[1]
 kinTerms = fns[2]
 Outputs: stressTerms[i,j] (i.e. ∂²W(K₁,K₂,K₃)/∂Kᵢ∂ξⱼ) and kinTerms[i,j,k] (this is equivalent to d^3W/dK_i/dXi_j/dK_kk) =#
 
+function symboic_hyperelastic_params(::Type{M}) where M <: ConstitutiveLaw
+    constituitive_params = fieldnames(M) 
+    return @variables constituitive_params...
+end
+
 function sensitivityFieldFncs(matlModel::Symbol)
     @variables α K[1:3] # K[1:3] are the orthogonal strain invariants
     λᵅ = Array{Any}(undef,3)
@@ -106,7 +111,7 @@ function sensitivityFieldFncs(matlModel::Symbol)
             end
         end
     end
-    return stressTerms, kinTerms
+    return stressTerms, kinTerms, ξ
 end
 
 # Function that produces a volume-weighted element-wise sensitivity metric

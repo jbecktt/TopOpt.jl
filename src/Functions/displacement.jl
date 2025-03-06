@@ -89,7 +89,7 @@ function (dp::HyperelasticDisplacement{T})(x::PseudoDensities) where {T}
     @assert length(global_dofs) == ndofs_per_cell(solver.problem.ch.dh)
     solver.vars .= x.x
     solver()
-    return DisplacementResult(copy(solver.u)), copy(solver.F) #, copy(solver.F) # I need to add F support
+    return DisplacementResult(copy(solver.u)),copy(solver.F) #, copy(solver.F) # I need to add F support
 end
 
 """
@@ -127,4 +127,31 @@ function ChainRulesCore.rrule(dp::Displacement, x::PseudoDensities)
         end
         return nothing, Tangent{typeof(x)}(; x=dudx_tmp) # J1' * v, J2' * v
     end
+end
+
+function ChainRulesCore.rrule(dp::HyperelasticDisplacement, x::PseudoDensities)
+    forward(x) = dp(x)[1]
+    @unpack solver = dp
+    ek = ElementK(solver) 
+    Assemble_K = AssembleK(solver.problem) 
+    ef = ElementF(solver)
+    Assemble_g = AssembleG(solver) 
+    function conditions(x::PseudoDensities, u::TopOpt.Functions.DisplacementResult)
+        K = Assemble_K(ek(x, u))
+        f = Assemble_g(ef(u))
+        K_, f_ = apply_boundary_with_meandiag!(K, solver.problem.ch, f, false)
+        c = K_ * u - f_
+        return c
+    end
+    function solver_wrapper(A, b)
+        return Krylov.gmres(A, b; rtol=1e-10)
+    end
+    implicit = ImplicitDifferentiation.ImplicitFunction(forward, conditions, solver_wrapper)
+    function pullback(Δ)
+        J = Zygote.jacobian(implicit, x)[1] 
+        x̄ = J' * Δ  
+        return (NoTangent(), x̄, NoTangent())
+    end
+
+    return forward(x), pullback
 end

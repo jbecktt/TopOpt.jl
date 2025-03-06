@@ -57,7 +57,7 @@ export RayProblem,
     TensionRoller,
     assemble_hyperelastic!,
     ConstitutiveLaw,
-    NeoHooke,
+    NeoHookean,
     MooneyRivlin
 
 end # module

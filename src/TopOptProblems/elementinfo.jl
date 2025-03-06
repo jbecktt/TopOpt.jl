@@ -115,7 +115,8 @@ function ElementFEAInfo_hyperelastic(
         dof_cells=sp.metadata.dof_cells,
     )
     fixedload = Vector(make_cload_hyperelastic(sp,ts))
-    assemble_f!(fixedload, sp, dloads) # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! GUT FEELING
+    #assemble_f!(fixedload, sp, dloads) # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! GUT FEELING
+    assemble_f!(-fixedload,sp,ges)
     #assemble_f!(fixedload, sp, ges) # it would seem that this was an issue
     cellvolumes = get_cell_volumes(sp, cellvalues)
     cells = sp.ch.dh.grid.cells

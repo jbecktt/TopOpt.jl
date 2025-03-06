@@ -24,6 +24,7 @@ mutable struct HyperelasticDisplacementSolver{
     xmin::T
     ts0::T
     progressbar::Bool
+    direct_solve::Bool
 end
 mutable struct HyperelasticNearlyIncompressibleDisplacementSolver{
     T,
@@ -47,6 +48,7 @@ mutable struct HyperelasticNearlyIncompressibleDisplacementSolver{
     xmin::T
     ts0::T
     progressbar::Bool
+    direct_solve::Bool
 end
 function Base.show(::IO, ::MIME{Symbol("text/plain")}, x::HyperelasticDisplacementSolver)
     return println("TopOpt compressible hyperelastic solver")
@@ -61,9 +63,10 @@ function HyperelasticDisplacementSolver(
     penalty=PowerPenalty{T}(1),
     prev_penalty=deepcopy(penalty),
     quad_order=default_quad_order(sp),
-    ntsteps = 20,
+    ntsteps = 20, # Potential bug where initial displacement guess is returned occurs when the ntseps parameter is set to 1
     nearlyincompressible=false,
-    progressbar = false
+    progressbar = false,
+    direct_solve = false,
 ) where {dim,T}
     @assert isinteger(ntsteps) && ntsteps ≥ 1 
     u = zeros(T, ndofs(sp.ch.dh))
@@ -76,8 +79,8 @@ function HyperelasticDisplacementSolver(
     vars = fill(one(T), getncells(sp.ch.dh.grid) - sum(sp.black) - sum(sp.white))
     varind = sp.varind # This is here in the direct_displacement_solver but idk why it is here
     return nearlyincompressible ?
-        HyperelasticNearlyIncompressibleDisplacementSolver(mp, sp, globalinfo, elementinfo, u, F, vars, penalty, prev_penalty, xmin, ts0, progressbar) :
-        HyperelasticDisplacementSolver(mp, sp, globalinfo, elementinfo, u, F, vars, penalty, prev_penalty, xmin, ts0, progressbar)
+        HyperelasticNearlyIncompressibleDisplacementSolver(mp, sp, globalinfo, elementinfo, u, F, vars, penalty, prev_penalty, xmin, ts0, progressbar,direct_solve) :
+        HyperelasticDisplacementSolver(mp, sp, globalinfo, elementinfo, u, F, vars, penalty, prev_penalty, xmin, ts0, progressbar,direct_solve)
 end
 function (s::HyperelasticDisplacementSolver{T})(
     ::Type{Val{safe}}=Val{false},
@@ -89,6 +92,7 @@ function (s::HyperelasticDisplacementSolver{T})(
     globalinfo = s.globalinfo
     dh = s.problem.ch.dh
     ch = s.problem.ch
+    direct_solve = s.direct_solve
 
     _ndofs = ndofs(dh)
     un = zeros(_ndofs) # previous solution vector
@@ -117,7 +121,7 @@ function (s::HyperelasticDisplacementSolver{T})(
             # Compute residual norm for current guess
             elementinfo = update_firstelementinfo || newton_itr > 1 ? ElementFEAInfo_hyperelastic(s.mp, s.problem, u, default_quad_order(s.problem), Val{:Static}; ts=ts) : elementinfo 
             assemble_hyperelastic!(globalinfo,s.problem,elementinfo,s.vars,getpenalty(s),s.xmin,assemble_f=assemble_f)
-            apply_zero!(globalinfo.K,globalinfo.g,ch)
+            apply_zero!(globalinfo.K,globalinfo.g,ch) # repeated because also run in assembler_hyperelastic
             normg[newton_itr] = norm(globalinfo.g)
             # Check for convergence
             if normg[newton_itr] < NEWTON_TOL
@@ -128,7 +132,11 @@ function (s::HyperelasticDisplacementSolver{T})(
                 error("Reached maximum Newton iterations, aborting")
             end
             # Compute increment using conjugate gradients
-            IterativeSolvers.cg!(ΔΔu, globalinfo.K, globalinfo.g; maxiter=CG_MAXITER)
+            if direct_solve
+                ΔΔu.=globalinfo.K\globalinfo.g
+            else
+                IterativeSolvers.cg!(ΔΔu, globalinfo.K, globalinfo.g; maxiter=CG_MAXITER)
+            end
             apply_zero!(ΔΔu, ch)
             Δu .-= ΔΔu
         end
@@ -172,6 +180,8 @@ function (s::HyperelasticDisplacementSolver{T})(
     end
     s.u .= un
     s.F .= elementinfo.Fes
+    s.elementinfo = elementinfo
+    s.globalinfo = globalinfo
     ProgressMeter.finish!(prog)
     return nothing
 end
@@ -186,8 +196,9 @@ function (s::HyperelasticNearlyIncompressibleDisplacementSolver{T})(
     elementinfo = s.elementinfo
     globalinfo = s.globalinfo
     dh = s.problem.ch.dh
-    ch = s.problem.ch
-
+    ch = s.problem.ch,
+    direct_solve = s.direct_solve
+    
     _ndofs = ndofs(dh)
     un = zeros(_ndofs) # previous solution vector
 
@@ -212,7 +223,7 @@ function (s::HyperelasticNearlyIncompressibleDisplacementSolver{T})(
             # Compute residual norm for current guess
             elementinfo = ElementFEAInfo_hyperelastic(s.mp, s.problem, u, default_quad_order(s.problem), Val{:Static}; ts=ts)
             assemble_hyperelastic!(globalinfo,s.problem,elementinfo,s.vars,getpenalty(s),s.xmin,assemble_f=assemble_f)
-            apply_zero!(globalinfo.K,globalinfo.g,ch)
+            # apply_zero!(globalinfo.K,globalinfo.g,ch)
             normg[newton_itr] = norm(globalinfo.g)
             println("Tstep: $tstep / $ntsteps. Iteration: $newton_itr. normg is equal to " * string(normg[newton_itr]))
             # Check for convergence
@@ -222,7 +233,11 @@ function (s::HyperelasticNearlyIncompressibleDisplacementSolver{T})(
                 error("Reached maximum Newton iterations, aborting")
             end
             # Compute increment using conjugate gradients
-            IterativeSolvers.cg!(ΔΔu, globalinfo.K, globalinfo.g; maxiter=CG_MAXITER)
+            if direct_solve
+                ΔΔu.=globalinfo.K\globalinfo.g
+            else
+                IterativeSolvers.cg!(ΔΔu, globalinfo.K, globalinfo.g; maxiter=CG_MAXITER)
+            end
             apply_zero!(ΔΔu, ch)
             Δu .-= ΔΔu
         end
@@ -230,5 +245,7 @@ function (s::HyperelasticNearlyIncompressibleDisplacementSolver{T})(
     end
     s.u .= un
     s.F .= elementinfo.Fes
+    s.elementinfo = elementinfo
+    s.globalinfo = globalinfo
     return nothing
 end

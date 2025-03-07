@@ -6,6 +6,7 @@ using ..TopOpt.Utilities
 using ..TopOpt: PENALTY_BEFORE_INTERPOLATION
 using ..Utilities: @forward_property
 using Distributions: Distributions
+using Symbolics
 
 using VTKDataTypes
 

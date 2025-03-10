@@ -54,37 +54,30 @@ end
 stressTerms, kinTerms = sensitivityFieldFunctions(:ConstitutiveModel) 
 stressTerms = fns[1]
 kinTerms = fns[2]
-Outputs: stressTerms[i,j] (i.e. ∂²W(K₁,K₂,K₃)/∂Kᵢ∂ξⱼ) and kinTerms[i,j,k] (this is equivalent to d^3W/dK_i/dXi_j/dK_kk) =#
+Outputs: stressTerms[i,j] (i.e. ∂²Ψ(K₁,K₂,K₃)/∂Kᵢ∂ξⱼ) and kinTerms[i,j,k] (this is equivalent to d^3Ψ/dK_i/dXi_j/dK_kk) =#
 
-function symboic_hyperelastic_params(::Type{M}) where M <: ConstitutiveLaw
-    constituitive_params = fieldnames(M) 
-    return @variables constituitive_params...
-end
-
-function sensitivityFieldFncs(matlModel::Symbol)
-    @variables α K[1:3] # K[1:3] are the orthogonal strain invariants
+function sensitivityFieldFncs(mp::M) where M <: ConstitutiveLaw
+    ξ = [Symbolics.variable(param) for param in fieldnames(M)]
+    ξ_vals = [getfield(mp, Symbol(param)) for param in ξ]
+    idx_κ = findall(isequal(Symbolics.variable(:κ)),ξ)
+    @assert length(idx_κ) == 1
+    if idx_κ[1] != length(ξ) # ensure kappa is the final parameter in ξ
+        deleteat!(ξ, idx_κ)
+        push!(ξ, Symbolics.variable(:κ))
+    end
+    ##ξ_vals = [getfield(mp,param) for param in ξ]
+    @variables α K[1:3] Ī₁ Ī₂ bulk # K[1:3] are the orthogonal strain invariants
+    
     λᵅ = Array{Any}(undef,3)
     λᵅ[1] = exp(α*K[2]*sqrt(2/3)*sin((-asin(K[3])+2π)/3))
     λᵅ[2] = exp(α*K[2]*sqrt(2/3)*sin((-asin(K[3]))/3))
     λᵅ[3] = exp(α*K[2]*sqrt(2/3)*sin((-asin(K[3])-2π)/3))
 
-    # construct the work function for called constitutive model, W
-    Ī₁ = sum(substitute(λᵅ[i], Dict(α => 2)) for i in 1:3)
-    bulk = (exp(K[1])-1)^2 # equivalent to (J-1)²
-    if matlModel in (:MooneyRivlin, :MR) # note: bulk modulus (κ) must be the final parameter in ξ for all matlModel
-        ξ = @variables C₁₀ C₀₁ κ
-        Ī₂ = sum(substitute(λᵅ[i], Dict(α => -2)) for i in 1:3)
-        W = C₁₀*(Ī₁-3) + C₀₁*(Ī₂-3) + (κ/2)*bulk
-    elseif matlModel in (:NeoHookean, :NH)
-        ξ = @variables µ κ
-        W = (µ/2)*(Ī₁-3) + (κ/2)*bulk
-    elseif matlModel in (:Yeoh2, :Y2)
-        ξ = @variables C₁₀ C₂₀ κ
-        W = C₁₀*(Ī₁-3) + C₂₀*(Ī₁-3)^2 + (κ/2)*bulk
-    elseif matlModel in (:Yeoh3, :Y3)
-        ξ = @variables C₁₀ C₂₀ C₃₀ κ
-        W = C₁₀*(Ī₁-3) + C₂₀*(Ī₁-3)^2 + C₃₀*(Ī₁-3)^3 + (κ/2)*bulk
-    end
+    # construct the work function for called constitutive model, Ψ
+    Ī₁_ = sum(substitute(λᵅ[i], Dict(α => 2)) for i in 1:3)
+    Ī₂_ = sum(substitute(λᵅ[i], Dict(α => -2)) for i in 1:3)
+    bulk_ = (exp(K[1])-1)^2 # equivalent to (J-1)²
+    Ψ = substitute(TopOptProblems.Ψ(mp), Dict(Ī₁ => Ī₁_, Ī₂ => Ī₂_, bulk => bulk_))
 
     # solve for terms used to in stress and kinematic field calculations
     stressTerms = Array{Any}(undef,length(K),length(ξ))
@@ -92,9 +85,9 @@ function sensitivityFieldFncs(matlModel::Symbol)
         for j = 1:length(ξ)
             ∂Kᵢ∂ξⱼ = Differential(K[i])*Differential(ξ[j]) # ∂²/∂Kᵢ∂ξⱼ
             if i == 1 && j == length(ξ)
-                stressTerms[i,j] = eval(build_function(expand_derivatives(∂Kᵢ∂ξⱼ(W)),K[1])) # ∂²W(K₁)/∂K₁∂κ
+                stressTerms[i,j] = eval(build_function(expand_derivatives(∂Kᵢ∂ξⱼ(Ψ)),K[1])) # ∂²Ψ(K₁)/∂K₁∂κ
             elseif i != 1 && j != length(ξ)
-                stressTerms[i,j] = eval(build_function(expand_derivatives(∂Kᵢ∂ξⱼ(W)),K[2],K[3])) # ∂²W(K₂,K₃)/∂Kᵢ∂ξⱼ
+                stressTerms[i,j] = eval(build_function(expand_derivatives(∂Kᵢ∂ξⱼ(Ψ)),K[2],K[3])) # ∂²Ψ(K₂,K₃)/∂Kᵢ∂ξⱼ
             end
         end
     end
@@ -104,14 +97,14 @@ function sensitivityFieldFncs(matlModel::Symbol)
             for k = 1:length(K)
                 ∂Kᵢ∂ξⱼ∂Kₖ = Differential(K[i])*Differential(ξ[j])*Differential(K[k]) # ∂³/∂Kᵢ∂ξⱼ∂Kₖ
                 if i == 1 && j == length(ξ) && k == 1 
-                    kinTerms[i,j,k] = eval(build_function(expand_derivatives(∂Kᵢ∂ξⱼ∂Kₖ(W)),K[1])) # ∂³W(K₁)/∂²K₁∂κ
+                    kinTerms[i,j,k] = eval(build_function(expand_derivatives(∂Kᵢ∂ξⱼ∂Kₖ(Ψ)),K[1])) # ∂³Ψ(K₁)/∂²K₁∂κ
                 elseif i != 1 && j != length(ξ) && k != 1 
-                    kinTerms[i,j,k] = eval(build_function(expand_derivatives(∂Kᵢ∂ξⱼ∂Kₖ(W)),K[2],K[3])) # ∂³W(K₂,K₃)/∂Kᵢ∂ξⱼ∂Kₖ
+                    kinTerms[i,j,k] = eval(build_function(expand_derivatives(∂Kᵢ∂ξⱼ∂Kₖ(Ψ)),K[2],K[3])) # ∂³Ψ(K₂,K₃)/∂Kᵢ∂ξⱼ∂Kₖ
                 end
             end
         end
     end
-    return stressTerms, kinTerms, ξ
+    return stressTerms, kinTerms, ξ_vals
 end
 
 # Function that produces a volume-weighted element-wise sensitivity metric
@@ -128,18 +121,18 @@ end
 
 function sensitivityPVW(x,K,V0,stressTerms,kinTerms,ξ)
     # Stress term evaluation at K
-    ξᵢ∂²W_∂K₁∂ξᵢ = ξ[end]*stressTerms[1,end].(K[1]) 
-    ξᵢ∂²W_∂K₂∂ξᵢ = sum(map(i -> ξ[i]*stressTerms[2,i].(K[2],K[3]), 1:length(ξ)-1))
-    ξᵢ∂²W_∂K₃∂ξᵢ = sum(map(i -> ξ[i]*stressTerms[3,i].(K[2],K[3]), 1:length(ξ)-1))
+    ξᵢ∂²Ψ_∂K₁∂ξᵢ = ξ[end]*stressTerms[1,end].(K[1]) 
+    ξᵢ∂²Ψ_∂K₂∂ξᵢ = sum(map(i -> ξ[i]*stressTerms[2,i].(K[2],K[3]), 1:length(ξ)-1))
+    ξᵢ∂²Ψ_∂K₃∂ξᵢ = sum(map(i -> ξ[i]*stressTerms[3,i].(K[2],K[3]), 1:length(ξ)-1))
 
     # Internal virtual work (IVW) evaluation
     IVW_bar = zeros(length(x))
     for i = 1:length(ξ) # ξᵢ
         for j = 1:length(K) # Kⱼ
             if i == length(ξ) && j == 1
-                IVW_bar += 3*V0.*(x.^2).*ξᵢ∂²W_∂K₁∂ξᵢ.*kinTerms[1,i,j].(K[1])
+                IVW_bar += 3*V0.*(x.^2).*ξᵢ∂²Ψ_∂K₁∂ξᵢ.*kinTerms[1,i,j].(K[1])
             elseif i != length(ξ) && j != 1 
-                IVW_bar += V0.*(x.^2).*(ξᵢ∂²W_∂K₂∂ξᵢ.*kinTerms[2,i,j].(K[2],K[3]) + (9*(ones(length(x))-(K[3].^2))./(K[2].^2)).*ξᵢ∂²W_∂K₃∂ξᵢ.*kinTerms[3,i,j].(K[2],K[3]))
+                IVW_bar += V0.*(x.^2).*(ξᵢ∂²Ψ_∂K₂∂ξᵢ.*kinTerms[2,i,j].(K[2],K[3]) + (9*(ones(length(x))-(K[3].^2))./(K[2].^2)).*ξᵢ∂²Ψ_∂K₃∂ξᵢ.*kinTerms[3,i,j].(K[2],K[3]))
             end
         end
     end

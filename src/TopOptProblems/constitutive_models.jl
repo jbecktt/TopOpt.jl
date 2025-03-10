@@ -10,14 +10,18 @@ struct MooneyRivlin{T} <: ConstitutiveLaw
     κ::T
 end
 struct Yeoh2{T} <: ConstitutiveLaw
-    C₁₀::T 
-    C₂₀::T  
+    C₁₀::T
+    C₂₀::T
+    κ::T
 end
 struct Yeoh3{T} <: ConstitutiveLaw
-    C₁₀::T 
-    C₂₀::T  
+    C₁₀::T
+    C₂₀::T
     C₃₀::T
+    κ::T
 end
+
+Base.length(M::ConstitutiveLaw) = fieldcount(typeof(M))
 
 function init_material(type_constructor, ξ::Dict{Symbol,<:Real})
     params = fieldnames(type_constructor)
@@ -38,42 +42,46 @@ end
 
 function Ψ(C, mp::NeoHookean)
     if isnothing(C)
-        @variables Ī₁, bulk
+        @variables Ī₁, bulk, μ, κ
     else
         J = sqrt(det(C))
         bulk = (J-1)^2
         Ī₁ = tr(C)*J^(-2/3)
+        μ = mp.μ; κ = mp.κ
     end
-    return mp.μ/2*(Ī₁-3) + mp.κ/2*bulk
+    return μ/2*(Ī₁-3) + κ/2*bulk
 end
 function Ψ(C, mp::MooneyRivlin)
     if isnothing(C)
-        @variables Ī₁, Ī₂, bulk
+        @variables Ī₁, Ī₂, bulk, C₁₀, C₀₁, κ
     else
         J = sqrt(det(C))
         bulk = (J-1)^2
         Ī₁ = tr(C)*J^(-2/3)
         Ī₂ = 0.5*(mp.Ī₁^2-tr(C*C)*J^(-4/3))
+        C₁₀ = mp.C₁₀; C₀₁ = mp.C₀₁; κ = mp.κ
     end
-    return mp.C₁₀*(Ī₁-3) + mp.C₀₁*(Ī₂-3) + mp.κ/2*bulk
+    return C₁₀*(Ī₁-3) + C₀₁*(Ī₂-3) + κ/2*bulk
 end
 function Ψ(C, mp::Yeoh2)
     if isnothing(C)
-        @variables Ī₁, bulk
+        @variables Ī₁, bulk, C₁₀, C₂₀, κ
     else
         J = sqrt(det(C))
         bulk = (J-1)^2
         Ī₁ = tr(C)*J^(-2/3)
+        C₁₀ = mp.C₁₀; C₂₀ = mp.C₂₀; κ = mp.κ
     end
     return C₁₀*(Ī₁-3) + C₂₀*(Ī₁-3)^2 + (κ/2)*bulk
 end
 function Ψ(C, mp::Yeoh3)
     if isnothing(C)
-        @variables Ī₁, bulk
+        @variables Ī₁, bulk, C₁₀, C₂₀, C₃₀, κ
     else
         J = sqrt(det(C))
         bulk = (J-1)^2
         Ī₁ = tr(C)*J^(-2/3)
+        C₁₀ = mp.C₁₀; C₂₀ =  mp.C₂₀; C₃₀ = mp.C₃₀; κ= mp.κ
     end
     return C₁₀*(Ī₁-3) + C₂₀*(Ī₁-3)^2 + C₃₀*(Ī₁-3)^3 + (κ/2)*bulk
 end

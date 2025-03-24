@@ -114,7 +114,7 @@ function ElementFEAInfo_hyperelastic(
         bc_dofs=sp.ch.prescribed_dofs,
         dof_cells=sp.metadata.dof_cells,
     )
-    fixedload = Vector(make_cload_hyperelastic(sp,ts))
+    fixedload = Vector(-make_cload_hyperelastic(sp,ts))
     #assemble_f!(fixedload, sp, dloads) # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! GUT FEELING
     assemble_f!(-fixedload,sp,ges)
     #assemble_f!(fixedload, sp, ges) # it would seem that this was an issue

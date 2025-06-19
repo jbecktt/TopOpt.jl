@@ -59,6 +59,9 @@ export RayProblem,
     assemble_hyperelastic!,
     ConstitutiveLaw,
     NeoHookean,
-    MooneyRivlin
+    MooneyRivlin,
+    Yeoh2,
+    Yeoh3,
+    ArrudaBoyce
 
 end # module

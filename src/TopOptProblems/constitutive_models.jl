@@ -1,3 +1,5 @@
+import InteractiveUtils: subtypes
+
 abstract type ConstitutiveLaw end
 
 struct NeoHookean{T} <: ConstitutiveLaw
@@ -20,8 +22,17 @@ struct Yeoh3{T} <: ConstitutiveLaw
     C₃₀::T
     κ::T
 end
+struct ArrudaBoyce{T} <: ConstitutiveLaw
+    μ::T
+    λₘ::T
+    κ::T
+end
 
 Base.length(M::ConstitutiveLaw) = fieldcount(typeof(M))
+function Base.show(io::IO, ::MIME"text/plain", T::Type{<:ConstitutiveLaw})
+    names = join(fieldnames(T), ", ")
+    println(io, "$(T) model parameters: $names")
+end
 
 function init_material(type_constructor, ξ::Dict{Symbol,<:Real})
     params = fieldnames(type_constructor)
@@ -30,16 +41,14 @@ function init_material(type_constructor, ξ::Dict{Symbol,<:Real})
     T = _T <: Integer ? Float64 : _T
     return type_constructor(map(T, values)...)
 end
-
-NeoHookean(ξ::Dict{Symbol,<:Real}) = init_material(NeoHookean, ξ)
-MooneyRivlin(ξ::Dict{Symbol,<:Real}) = init_material(MooneyRivlin, ξ)
-Yeoh2(ξ::Dict{Symbol,<:Real}) = init_material(Yeoh2, ξ)
-Yeoh3(ξ::Dict{Symbol,<:Real}) = init_material(Yeoh3, ξ)
+for T in subtypes(ConstitutiveLaw)
+    name = nameof(T)
+    @eval $(Symbol(name))(ξ::Dict{Symbol,<:Real}) = init_material($(Symbol(name)), ξ)
+end
 
 function Ψ(mp::M) where M <: ConstitutiveLaw
     return Ψ(nothing,mp)
 end
-
 function Ψ(C, mp::NeoHookean)
     if isnothing(C)
         @variables Ī₁, bulk, μ, κ
@@ -85,7 +94,15 @@ function Ψ(C, mp::Yeoh3)
     end
     return C₁₀*(Ī₁-3) + C₂₀*(Ī₁-3)^2 + C₃₀*(Ī₁-3)^3 + (κ/2)*bulk
 end
-
-# TODO combine Ψ functions into one combined function??
-# probably will do when all written in terms of F --> entails messing with matricies_and_vectors stuff
-# note: useful for optionally calcuating without assigning Ī₂ = mp isa MooneyRivlin ? sum(substitute(λᵅ[i], Dict(α => -2)) for i in 1:3) : Ī₂
+function Ψ(C, mp::ArrudaBoyce)
+    if isnothing(C)
+        @variables Ī₁, bulk, μ, λₘ, κ
+    else
+        J = sqrt(det(C))
+        bulk = (J-1)^2
+        Ī₁ = tr(C)*J^(-2/3)
+        μ = mp.μ; λₘ = mp.λₘ; κ = mp.κ
+    end
+    expansion_coeffs = [1/2 1/20 11/1050 19/7000 519/673750]
+    return sum(i -> μ*(expansion_coeffs[i]/λₘ^(2i - 2))*(Ī₁^i - 3^i), 1:5) + (κ/2)*bulk
+end
